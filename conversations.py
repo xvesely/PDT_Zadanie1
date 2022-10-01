@@ -1,4 +1,5 @@
 from __future__ import barry_as_FLUFL
+from importlib.resources import path
 import psycopg as pg3
 import psycopg2 as pg
 import psycopg2.extensions
@@ -30,8 +31,9 @@ def make_string_valid(string):
     return string
 
 
-def import_conversation_table(path_to_conversation_export, row_range=(0, -1),
-                              log_step=10000, clear_table=True, batch_size=1000):
+def import_conversation_table(path_to_conversation_export, authors_ids, row_range=(0, -1),
+                              log_step=100000, drop_table=True, batch_size=1000):
+
     print("...Filling 'conversations' table...")
     start_time = time.time()
     prev_block_time = start_time
@@ -57,17 +59,23 @@ def import_conversation_table(path_to_conversation_export, row_range=(0, -1),
 
         with connection.cursor() as cursor:
 
+            # drop the table if necessary
+            if drop_table:
+                cursor.execute("""
+                    DROP TABLE IF EXISTS conversations;
+                """)
+                cursor.execute("""
+                    DELETE FROM authors; 
+                """)
+                #TODO teraz tam mam aj authorov, lebo som ich nechceme vymazal...
+
             # create table
             cursor.execute(create_table_string)
 
-            # clear the table if necessary
-            if clear_table:
-                cursor.execute("""
-                    DELETE FROM authors;
-                """)
-
             with gzip.open(path_to_conversation_export, 'r') as f:
                 conversation_rows_batch = []
+                new_author_rows_to_add = []
+
                 all_ids = {}
 
                 for it, conversation_json_str in enumerate(f):
@@ -76,11 +84,238 @@ def import_conversation_table(path_to_conversation_export, row_range=(0, -1),
                     if row_range[1] != -1 and it >= row_range[1]:
                         break
 
-                conversation_obj = json.loads(conversation_json_str)
-                conversation_data = prepare_conversation(conversation_obj)
+                    conversation_obj = json.loads(conversation_json_str)
+                    conversation = prepare_conversation(conversation_obj)
 
-                if conversation_data is None:
-                    pass
+                    # if weve got a duplicate id, the size of dictionary remains the same
+                    if conversation is not None and not_duplicate(all_ids, conversation[0]):
+                        conversation_rows_batch.append(conversation)
+
+                        if not_duplicate(authors_ids, conversation[1]):
+                            new_author_rows_to_add.append(
+                                [conversation[1]] + [None]*7
+                            )
+
+                        if len(conversation_rows_batch) == batch_size:
+                            conversation_rows_batch, new_author_rows_to_add = conversation_copy_cmd(
+                                cursor, conversation_rows_batch, new_author_rows_to_add)
+
+                    if it % log_step == 0 and it != 0 and it != row_range[0]:
+                        connection.commit()
+                        prev_block_time = log_time(it, log_step, start_time, prev_block_time)
+
+                if len(conversation_rows_batch) != 0:
+                    conversation_rows_batch, new_author_rows_to_add = conversation_copy_cmd(
+                                    cursor, conversation_rows_batch, new_author_rows_to_add)
+                    connection.commit()
+
+
+def conversation_copy_cmd(cursor, conversations, authors):
+    with cursor.copy("""
+        COPY conversations (id, author_id, content,
+        possibly_sensitive, language, source,
+        retweet_count, reply_count, like_count,
+        quote_count, created_at) FROM STDIN
+    """) as copy:
+        for conversation_record in conversations:
+            copy.write_row(conversation_record)
+
+    if len(authors) > 0:
+        with cursor.copy("""
+            COPY authors (id, name, username, description, 
+            followers_count, following_count, tweet_count, 
+            listed_count) FROM STDIN
+        """) as copy:
+            for author_record in authors:
+                copy.write_row(author_record)
+
+    return [], []
+
+
+def log_time(it, log_step, start_time, prev_block_time):
+    time_check = time.time()
+
+    elapsed_time = (time_check - start_time) / 60
+    block_time = time_check - prev_block_time
+
+    pid = os.getpid()
+
+    print(
+        f"{pid} | it: {it-log_step}-{it} | Time elapsed since the beggining: {elapsed_time:.2f} min | Time spent on the last block: {block_time:.2f}s")
+    
+    return time_check
+
+
+def not_duplicate(all_ids, new_id):
+    len_ids = len(all_ids.keys())
+    all_ids[int(new_id)] = "1"
+    new_len_ids = len(all_ids.keys())
+
+    return len_ids != new_len_ids
+
+
+def import_annotation_table(path_to_conversation_export, row_range=(0, -1),
+                              log_step=100000, drop_table=True, batch_size=1000):
+
+    print("...Filling 'annotations' table...")
+    start_time = time.time()
+    prev_block_time = start_time
+
+    create_table_string = """
+        CREATE TABLE IF NOT EXISTS annotations (
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id int8 NOT NULL,
+        value text NOT NULL,
+        type text NOT NULL,
+        probability numeric(4,3) NOT NULL
+        );
+    """
+
+    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
+                     password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
+
+        with connection.cursor() as cursor:
+
+            if drop_table:
+                cursor.execute("""
+                    DROP TABLE IF EXISTS annotations;
+                """)
+                
+            cursor.execute(create_table_string)
+
+            with gzip.open(path_to_conversation_export, 'r') as f:
+                annotation_rows_batch = []
+                conversation_ids = {}
+                
+                for it, conversation_json_str in enumerate(f):
+                    if it < row_range[0]:
+                        continue
+                    if row_range[1] != -1 and it >= row_range[1]:
+                        break
+
+                    conversation_obj = json.loads(conversation_json_str)
+                    
+                    if check_conversation_validity(conversation_obj) and not_duplicate(conversation_ids, conversation_obj["id"]):
+                        annotation_arr = prepare_annotations(conversation_obj)
+
+                        if annotation_arr is not None:
+                            annotation_rows_batch.extend(annotation_arr)
+                            
+                            if len(annotation_rows_batch) >= batch_size:
+                                with cursor.copy("""
+                                    COPY annotations (conversation_id, value, type, 
+                                    probability) FROM STDIN
+                                """) as copy:
+                                    for annotation_record in annotation_rows_batch:
+                                        copy.write_row(annotation_record)
+
+                                annotation_rows_batch = []
+
+                        if it % log_step == 0 and it != 0 and it != row_range[0]:
+                            connection.commit()
+                            prev_block_time = log_time(it, log_step, start_time, prev_block_time)
+
+                if len(annotation_rows_batch) != 0:
+                    with cursor.copy("""
+                        COPY annotations (conversation_id, value, type, 
+                        probability) FROM STDIN
+                    """) as copy:
+                        for annotation_record in annotation_rows_batch:
+                            copy.write_row(annotation_record)
+                    connection.commit()
+
+
+
+# TODO - not finished yet
+def import_hashtags(path_to_conversation_export, row_range=(0, -1),
+                            log_step=10000, drop_table=True, batch_size=1000):
+    
+    print("...Filling 'hashtags' and 'conversation_hashtags' tables...")
+    start_time = time.time()
+    prev_block_time = start_time
+
+    create_table_string1 = """
+        CREATE TABLE IF NOT EXISTS hashtags (
+        id int8 PRIMARY KEY,
+        tag text NOT NULL
+        );
+    """
+    create_table_string2 = """
+        CREATE TABLE IF NOT EXISTS conversation_hashtags (
+        id int8 PRIMARY KEY,
+        conversation_id int8 NOT NULL,
+        hashtag_id int8 NOT NULL
+        );
+    """
+
+    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
+                    password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
+
+        with connection.cursor() as cursor:
+
+            if drop_table:
+                cursor.execute("""
+                    DELETE FROM hashtags;
+                """)
+                cursor.execute("""
+                    DELETE FROM conversations_hashtags;
+                """)
+
+            cursor.execute(create_table_string1)
+            cursor.execute(create_table_string2)
+
+            with gzip.open(path_to_conversation_export, 'r') as f:
+                conversation_rows_batch = []
+                all_tags = {}
+
+                for it, conversation_json_str in enumerate(f):
+                    if it < row_range[0]:
+                        continue
+                    if row_range[1] != -1 and it >= row_range[1]:
+                        break
+                    conversation_obj = json.loads(conversation_json_str)
+
+                    if check_conversation_validity(conversation_obj):
+                        hashtag_arr = prepare_hashtags(conversation_obj)
+
+                        if hashtag_arr is not None:
+                            indices = get_indices_of_new_unique_tags(hashtag_arr, all_tags)
+
+                            len_ids = len(all_tags.keys())
+                            all_tags[conversation[0]] = "1"
+                            new_len_ids = len(all_tags.keys())
+
+                            # if weve got a duplicate id, the size of dictionary remains the same
+                            if len_ids != new_len_ids:
+                                conversation_rows_batch.append(conversation)
+
+                                len_ids = len(authors_ids.keys())
+                                authors_ids[conversation[1]] = "1"
+                                new_len_ids = len(authors_ids.keys())
+
+                                # add a new author to table if not exists
+                                if len_ids != new_len_ids:
+                                    new_author_rows_to_add.append(
+                                        [conversation[1]] + [None]*7
+                                    )
+
+                                if len(conversation_rows_batch) == batch_size:
+                                    conversation_rows_batch, new_author_rows_to_add = conversation_copy_cmd(
+                                        cursor, conversation_rows_batch, new_author_rows_to_add)
+
+                    if it % log_step == 0 and it != 0 and it != row_range[0]:
+                        connection.commit()
+                        prev_block_time = log_time(it, log_step, start_time, prev_block_time)
+
+                if len(conversation_rows_batch) != 0:
+                    conversation_rows_batch, new_author_rows_to_add = conversation_copy_cmd(
+                                    cursor, conversation_rows_batch, new_author_rows_to_add)
+
+
+def get_indices_of_new_unique_tags(hashtag_arr, all_tags):
+    
+    
+    pass
 
 
 def check_conversation_validity(obj):
@@ -378,14 +613,37 @@ def prepare_conversation_references(conversation):
         return references_arr
     return None
 
+def job_dispatcher(value):
+    path_to_conversations = r"C:\Users\marve\conversations.jsonl.gz"
+
+    if value == 0:
+        with open("author_ids.json", "r") as f:
+            author_ids = json.load(f)
+
+        author_dict_ids = {
+            item: "1" for item in author_ids
+        }
+
+        import_conversation_table(path_to_conversations, author_dict_ids)
+    else:
+        import_annotation_table(path_to_conversations)
 
 if __name__ == "__main__":
     path_to_conversations = r"C:\Users\marve\conversations.jsonl.gz"
 
-    with gzip.open(path_to_conversations, 'r') as f:
-        for it, conversation in enumerate(f):
-            conversation_object = json.loads(conversation)
-            prepare_conversation(conversation_object, prepare_other_models=True)
+    # with open("author_ids.json", "r") as f:
+    #     author_ids = json.load(f)
 
-            if it % 10000 == 0:
-                print(it)
+    # author_dict_ids = {
+    #     item: "1" for item in author_ids
+    # }
+
+    # import_conversation_table(path_to_conversations, author_dict_ids)
+
+    tables = [0, 1]
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+        executor.map(job_dispatcher, tables)
+
+    # import_conversation_table(path_to_conversations, author_dict_ids)
+    # import_annotation_table(path_to_conversations)

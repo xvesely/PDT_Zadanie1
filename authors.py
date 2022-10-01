@@ -210,6 +210,7 @@ def import_author_table_using_copy(path_to_author_export, row_range=(0,-1), log_
                     """) as copy:
                         for author_record in author_rows_batch:
                             copy.write_row(author_record)
+                    connection.commit()
         
 
     print("...Finished importing 'authors' data...")
