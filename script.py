@@ -1,0 +1,1 @@
+# tu bude logika importovania json udajov do databazy
