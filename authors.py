@@ -30,101 +30,101 @@ def make_string_valid(string):
     return string
 
 
-def import_author_table(path_to_author_export, row_range=(0,-1), log_step=10000, clear_table=True, batch_size=128):
-    print("...Importing 'authors' data...")
-    start_time = time.time()
-    prev_block_time = start_time
+# def import_author_table(path_to_author_export, row_range=(0,-1), log_step=10000, clear_table=True, batch_size=128):
+#     print("...Importing 'authors' data...")
+#     start_time = time.time()
+#     prev_block_time = start_time
 
-    create_table_string = """
-        CREATE TABLE IF NOT EXISTS authors (
-	    id int8 PRIMARY KEY,
-        name varchar(255),
-        username varchar(255),
-        description text,
-        followers_count int4,
-        following_count int4,
-        tweet_count int4,
-        listed_count int4
-        );
-    """
+#     create_table_string = """
+#         CREATE TABLE IF NOT EXISTS authors (
+# 	    id int8 PRIMARY KEY,
+#         name varchar(255),
+#         username varchar(255),
+#         description text,
+#         followers_count int4,
+#         following_count int4,
+#         tweet_count int4,
+#         listed_count int4
+#         );
+#     """
 
-    connection = pg.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
-                            password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres")
-    pg.extensions.register_type(pg.extensions.UNICODE, connection)
-    cursor = connection.cursor()
+#     connection = pg.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
+#                             password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres")
+#     pg.extensions.register_type(pg.extensions.UNICODE, connection)
+#     cursor = connection.cursor()
 
-    # create table
-    cursor.execute(create_table_string)
+#     # create table
+#     cursor.execute(create_table_string)
 
-    # clear the table if necessary
-    if clear_table:
-        cursor.execute("""
-            DELETE FROM authors;
-        """)
+#     # clear the table if necessary
+#     if clear_table:
+#         cursor.execute("""
+#             DELETE FROM authors;
+#         """)
 
-    try:
-        with gzip.open(path_to_author_export, 'r') as f:
-            author_rows_batch = []
+#     try:
+#         with gzip.open(path_to_author_export, 'r') as f:
+#             author_rows_batch = []
         
-            for it, author_json_str in enumerate(f):
-                if it < row_range[0]:
-                    continue
-                if row_range[1] != -1 and it >= row_range[1]:
-                    break
+#             for it, author_json_str in enumerate(f):
+#                 if it < row_range[0]:
+#                     continue
+#                 if row_range[1] != -1 and it >= row_range[1]:
+#                     break
 
-                author_obj = json.loads(author_json_str)
-                author_row = migrate_author_entity(author_obj)
+#                 author_obj = json.loads(author_json_str)
+#                 author_row = migrate_author_entity(author_obj)
 
-                if author_row is not None:
-                    author_rows_batch.append(author_row)
+#                 if author_row is not None:
+#                     author_rows_batch.append(author_row)
                 
-                    if len(author_rows_batch) == batch_size:
-                        execute_batch(cursor, """
-                            INSERT INTO authors (id, name, username, description, 
-                            followers_count, following_count, tweet_count, 
-                            listed_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (id) DO NOTHING
-                            """,
-                            author_rows_batch, page_size=batch_size
-                        )
+#                     if len(author_rows_batch) == batch_size:
+#                         execute_batch(cursor, """
+#                             INSERT INTO authors (id, name, username, description, 
+#                             followers_count, following_count, tweet_count, 
+#                             listed_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+#                             ON CONFLICT (id) DO NOTHING
+#                             """,
+#                             author_rows_batch, page_size=batch_size
+#                         )
 
-                        author_rows_batch = []
+#                         author_rows_batch = []
 
-                if it % log_step == 0 and it != 0 and it != row_range[0]:
-                    connection.commit()
-                    time_check = time.time()
+#                 if it % log_step == 0 and it != 0 and it != row_range[0]:
+#                     connection.commit()
+#                     time_check = time.time()
 
-                    elapsed_time = (time_check - start_time) / 60
-                    block_time = time_check - prev_block_time
+#                     elapsed_time = (time_check - start_time) / 60
+#                     block_time = time_check - prev_block_time
 
-                    pid = os.getpid()
+#                     pid = os.getpid()
 
-                    print(
-                        f"{pid} | it: {it-log_step}-{it} | Time elapsed since the beggining: {elapsed_time:.2f} min | Time spent on the last block: {block_time:.2f}s")
-                    prev_block_time = time_check
+#                     print(
+#                         f"{pid} | it: {it-log_step}-{it} | Time elapsed since the beggining: {elapsed_time:.2f} min | Time spent on the last block: {block_time:.2f}s")
+#                     prev_block_time = time_check
                 
-            if len(author_rows_batch) != 0:
-                execute_batch(cursor, """
-                    INSERT INTO authors (id, name, username, description, 
-                    followers_count, following_count, tweet_count, 
-                    listed_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    author_rows_batch, page_size=batch_size
-                )
-                connection.commit()
-    except Exception as e:
-        print(e)
-        print(e.with_traceback())
-        raise e
+#             if len(author_rows_batch) != 0:
+#                 execute_batch(cursor, """
+#                     INSERT INTO authors (id, name, username, description, 
+#                     followers_count, following_count, tweet_count, 
+#                     listed_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+#                     ON CONFLICT (id) DO NOTHING
+#                     """,
+#                     author_rows_batch, page_size=batch_size
+#                 )
+#                 connection.commit()
+#     except Exception as e:
+#         print(e)
+#         print(e.with_traceback())
+#         raise e
 
-    cursor.close()
-    connection.close()
-    print("...Finished importing 'authors' data...")
+#     cursor.close()
+#     connection.close()
+#     print("...Finished importing 'authors' data...")
 
 
-def import_author_table_using_copy(path_to_author_export, row_range=(0,-1), log_step=10000, clear_table=True, batch_size=128):
-    print("...Importing 'authors' data...")
+def import_author_table_using_copy(path_to_author_export, row_range=(0,-1), log_step=10000, clear_table=True, batch_size=1000):
+    print("...Filling 'authors' table...")
     start_time = time.time()
     prev_block_time = start_time
 
@@ -144,7 +144,6 @@ def import_author_table_using_copy(path_to_author_export, row_range=(0,-1), log_
     with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'), 
             password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
 
-        
         # pg3.extensions.register_type(pg.extensions.UNICODE, connection)
         with connection.cursor() as cursor:
 
@@ -214,7 +213,7 @@ def import_author_table_using_copy(path_to_author_export, row_range=(0,-1), log_
         
 
     print("...Finished importing 'authors' data...")
-
+    return all_ids
 
 
 def migrate_author_entity(original_obj):
@@ -222,7 +221,10 @@ def migrate_author_entity(original_obj):
 
     if exists(obj, "id", is_id=True) == False:
         return None
-    obj["id"] = int(obj["id"])
+    try:
+        obj["id"] = int(obj["id"])
+    except:
+        return None
 
     nullable_string_attributes = [
         "name",
@@ -234,6 +236,9 @@ def migrate_author_entity(original_obj):
             obj[str_attrb] = None
         else:
             obj[str_attrb] = make_string_valid(obj[str_attrb])
+
+    obj["name"] = obj["name"][:255]
+    obj["username"] = obj["username"][:255]
 
     public_metrics = [
         "followers_count",
@@ -251,7 +256,10 @@ def migrate_author_entity(original_obj):
             if exists(obj["public_metrics"], m) == False:
                 obj["public_metrics"][m] = None
             else:
-                obj["public_metrics"][m] = int(obj["public_metrics"][m])
+                try:
+                    obj["public_metrics"][m] = int(obj["public_metrics"][m])
+                except:
+                    obj["public_metrics"][m] = None
 
     table_row = [
         obj["id"],
