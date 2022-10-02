@@ -1,0 +1,12 @@
+SELECT * FROM conversations;
+
+SELECT * FROM hashtags;
+SELECT * FROM conversation_hashtags;
+
+SELECT * FROM conversation_references;
+SELECT * FROM links;
+SELECT * FROM annotations;
+
+SELECT * FROM context_domains;
+SELECT * FROM context_entities;
+SELECT * FROM context_annotations;
