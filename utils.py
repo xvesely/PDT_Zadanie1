@@ -1,5 +1,7 @@
 import time
 import os
+import pandas as pd
+from datetime import datetime
 
 
 def exists(obj, attr, is_id=False):
@@ -28,19 +30,46 @@ def exists_same_row(prior_rows, new_row):
     return False
 
 
-def log_time(table_name, it, log_step, start_time, prev_block_time):
-    time_check = time.time()
+def log_time(table_name, it, log_step, start_time, prev_block_time, log_to_console=True):
+    current_time = datetime.now().isoformat()
+    t_idx = current_time.find("T")
+    current_time = current_time[:t_idx+6] + "Z"
+    
+    time_checkpoint = time.time()
+    elapsed_time = time_checkpoint - start_time
+    block_time = time_checkpoint - prev_block_time  
 
-    elapsed_time = (time_check - start_time) / 60
-    block_time = time_check - prev_block_time
+    elapsed_time = format_duration(elapsed_time)
+    block_time = format_duration(block_time)
 
     pid = os.getpid()
 
-    print(
-        f"{pid} | {table_name} | it: {it-log_step}-{it} | Since beggining: {elapsed_time:.2f} min | Last block: {block_time:.2f}s")
+    if log_to_console:
+        print(
+            f"{pid} | {table_name} | it: {it-log_step}-{it} | Since beggining: {elapsed_time} | Last block: {block_time}")
     
-    return time_check
+    os.makedirs("./logs", exist_ok=True)
 
+    try:
+        df = pd.read_csv(f"./logs/{table_name}.csv", sep=";", header=None)
+    except:
+        df = pd.DataFrame(columns=["date", "all-time", "block-time"])
+
+    df.loc[len(df.index)] = [
+        current_time,
+        elapsed_time,
+        block_time
+    ]
+    df.to_csv(f"./logs/{table_name}.csv", sep=";", index=False, header=False)
+
+    return time_checkpoint
+
+
+def format_duration(duration):
+    mins = int(duration / 60)
+    secs = int(duration) % 60
+
+    return f"{mins:02d}:{secs:02d}"
 
 def not_duplicate(all_ids, new_id, cast_to_int=True):
     len_ids = len(all_ids.keys())

@@ -1,4 +1,5 @@
 from locale import currency
+from shutil import which
 import psycopg as pg3
 import psycopg2 as pg
 import psycopg2.extensions
@@ -13,13 +14,13 @@ import concurrent.futures
 from dotenv import load_dotenv
 
 import preprocess
-from utils import copy_data_to_table, log_time, not_duplicate
+from utils import copy_data_to_table, log_time, make_string_valid, not_duplicate
 
 
-def import_authors_table(path_to_author_export, row_range=(0,-1), log_step=100000, drop_table=True, batch_size=1000):
+def import_authors_table(path_to_author_export, start_time, row_range=(0,-1), 
+                            log_step=1000000, drop_table=True, batch_size=1000):
     print("...Filling 'authors' table...")
-    start_time = time.time()
-    prev_block_time = start_time
+    prev_block_time = time.time()
 
     create_table_string = """
         CREATE TABLE IF NOT EXISTS authors (
@@ -72,27 +73,26 @@ def import_authors_table(path_to_author_export, row_range=(0,-1), log_step=10000
                         if len(author_rows_batch) == batch_size:
                             author_rows_batch = copy_data_to_table(
                                 cursor, authors_query_string, author_rows_batch)
-
+                            connection.commit()
 
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
-                        connection.commit()
                         prev_block_time = log_time("authors", it, log_step, start_time, prev_block_time)
                     
                 if len(author_rows_batch) != 0:
                     copy_data_to_table(
                         cursor, authors_query_string, author_rows_batch)
                     connection.commit()
-        
+
+    prev_block_time = log_time("authors", it, log_step, start_time, prev_block_time)
     print("...Finished importing 'authors' table...")
     return all_author_ids
 
 
-def import_conversation_table(path_to_conversation_export, authors_ids, row_range=(0, -1),
-                              log_step=100000, drop_table=True, batch_size=1000):
+def import_conversation_table(path_to_conversation_export, start_time, authors_ids, row_range=(0, -1),
+                              log_step=1000000, drop_table=True, batch_size=1000):
 
     print("...Filling 'conversations' table...")
-    start_time = time.time()
-    prev_block_time = start_time
+    prev_block_time = time.time()
 
     create_table_string = """
         CREATE TABLE IF NOT EXISTS conversations (
@@ -151,9 +151,9 @@ def import_conversation_table(path_to_conversation_export, authors_ids, row_rang
                         if len(conversation_rows_batch) == batch_size:
                             conversation_rows_batch, new_author_rows_to_add = conversation_copy_cmd(
                                 cursor, conversation_rows_batch, new_author_rows_to_add)
+                            connection.commit()
 
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
-                        connection.commit()
                         prev_block_time = log_time("conversations", it, log_step, start_time, prev_block_time)
 
                 if len(conversation_rows_batch) != 0:
@@ -161,6 +161,7 @@ def import_conversation_table(path_to_conversation_export, authors_ids, row_rang
                         cursor, conversation_rows_batch, new_author_rows_to_add)
                     connection.commit()
 
+    prev_block_time = log_time("conversations", it, log_step, start_time, prev_block_time)
     print("...Finished importing 'conversations' table...")
 
 
@@ -186,15 +187,13 @@ def conversation_copy_cmd(cursor, conversations, authors):
     return [], []
 
 
-def import_annotations_links_references_table(path_to_conversation_export, row_range=(0, -1),
-                              log_step=100000, drop_table=True, batch_size=1000):
+def import_annotations_links_references_table(path_to_conversation_export, start_time, row_range=(0, -1),
+                              log_step=1000000, drop_table=True, batch_size=1000):
 
     print("...Filling 'annotations' table...")
     print("...Filling 'links' table...")
     print("...Filling 'conversation_references' table...")
-    start_time = time.time()
-    prev_block_time = start_time
-
+    prev_block_time = time.time()
 
     create_table_string1 = """
         CREATE TABLE IF NOT EXISTS annotations (
@@ -278,27 +277,33 @@ def import_annotations_links_references_table(path_to_conversation_export, row_r
                         links_arr = preprocess.prepare_links(conversation_obj)
                         references_arr = preprocess.prepare_conversation_references(conversation_obj)
 
+                        to_commit = False
+
                         if annotation_arr is not None:
                             annotation_rows_batch.extend(annotation_arr)
                             if len(annotation_rows_batch) >= batch_size:
                                 annotation_rows_batch = copy_data_to_table(
                                     cursor, annotation_copy_query, annotation_rows_batch)
-
+                                to_commit = True
+                                
                         if links_arr is not None:
                             link_rows_batch.extend(links_arr)
                             if len(link_rows_batch) >= batch_size:
                                 link_rows_batch = copy_data_to_table(
                                     cursor, links_copy_query, link_rows_batch)
-
+                                to_commit = True
+                            
                         if references_arr is not None:
                             references_rows_batch.extend(references_arr)
                             if len(references_rows_batch) >= batch_size:
                                 references_rows_batch = copy_data_to_table(
                                     cursor, references_copy_query, references_rows_batch)
-                        
+                                to_commit = True
+                                
+                        if to_commit:
+                            connection.commit()
 
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
-                        connection.commit()
                         prev_block_time = log_time("annot-links-refs", it, log_step, start_time, prev_block_time)
 
                 if len(annotation_rows_batch) != 0:
@@ -313,19 +318,18 @@ def import_annotations_links_references_table(path_to_conversation_export, row_r
                     copy_data_to_table(cursor, references_copy_query, references_rows_batch)
                     connection.commit()
 
+    prev_block_time = log_time("annot-links-refs", it, log_step, start_time, prev_block_time)
     print("...Finished importing 'annotations' table...")
     print("...Finished importing 'links' table...")
     print("...Finished importing 'conversation_references' table...")
 
-def import_context_domains_entities_annotations_tables(path_to_conversation_export, row_range=(0, -1),
-                            log_step=100000, drop_table=True, batch_size=1000):
+def import_context_domains_entities_annotations_tables(path_to_conversation_export, start_time, row_range=(0, -1),
+                            log_step=1000000, drop_table=True, batch_size=1000):
     
     print("...Filling 'context_domains' table...")
     print("...Filling 'context_entities' table...")
     print("...Filling 'context_annotation' table...")
-    start_time = time.time()
-    prev_block_time = start_time
-
+    prev_block_time = time.time()
 
     create_table_string1 = """
         CREATE TABLE IF NOT EXISTS context_domains (
@@ -417,22 +421,29 @@ def import_context_domains_entities_annotations_tables(path_to_conversation_expo
                         domain_rows_batch.extend(new_domains)
                         entity_rows_batch.extend(new_entities)
 
+                        to_commit = False
+
                         if len(domain_rows_batch) >= batch_size:
                             domain_rows_batch = copy_data_to_table(
                                 cursor, domain_query_string, domain_rows_batch)
+                            to_commit = True
 
                         if len(entity_rows_batch) >= batch_size:
                             entity_rows_batch = copy_data_to_table(
                                 cursor, entity_query_string, entity_rows_batch)
+                            to_commit = True
                             
                         if annotation_arr is not None:
                             annotation_rows_batch.extend(annotation_arr)
                             if len(annotation_rows_batch) >= batch_size:
                                 annotation_rows_batch = copy_data_to_table(
                                     cursor, annotation_query_string, annotation_rows_batch)
+                                to_commit = True
+                                
+                        if to_commit:
+                            connection.commit()
                     
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
-                        connection.commit()
                         prev_block_time = log_time("context", it, log_step, start_time, prev_block_time)
 
                 if len(domain_rows_batch) != 0:
@@ -447,14 +458,18 @@ def import_context_domains_entities_annotations_tables(path_to_conversation_expo
                     copy_data_to_table(cursor, annotation_query_string, annotation_rows_batch)
                     connection.commit()
 
+    prev_block_time = log_time("context", it, log_step, start_time, prev_block_time)
+    print("...Finished importing 'context_domains' table...")
+    print("...Finished importing 'context_entities' table...")
+    print("...Finished importing 'context_annotation' table...")
 
-def import_hashtags(path_to_conversation_export, row_range=(0, -1),
-                            log_step=100000, drop_table=True, batch_size=1000):
+
+def import_hashtags(path_to_conversation_export, start_time, row_range=(0, -1),
+                            log_step=1000000, drop_table=True, batch_size=1000):
     
     print("...Filling 'hashtags' table...")
     print("...Filling 'conversation_hashtags' table...")
-    start_time = time.time()
-    prev_block_time = start_time
+    prev_block_time = time.time()
 
     create_table_string1 = """
         CREATE TABLE IF NOT EXISTS hashtags (
@@ -537,16 +552,22 @@ def import_hashtags(path_to_conversation_export, row_range=(0, -1),
                             hashtag_rows_batch.extend(new_hashtags)
                             conv_hash_rows_batch.extend(new_conv_hash)
 
+                            to_commit = False
+
                             if len(hashtag_rows_batch) >= batch_size:
                                 hashtag_rows_batch = copy_data_to_table(
                                     cursor, hashtag_query_string, hashtag_rows_batch)
+                                to_commit = True
 
                             if len(conv_hash_rows_batch) >= batch_size:
                                 conv_hash_rows_batch = copy_data_to_table(
                                     cursor, conv_hash_query_string, conv_hash_rows_batch)
+                                to_commit = True
+                                
+                            if to_commit:
+                                connection.commit()
                     
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
-                        connection.commit()
                         prev_block_time = log_time("hashtags", it, log_step, start_time, prev_block_time)
 
                 if len(hashtag_rows_batch) != 0:
@@ -557,10 +578,14 @@ def import_hashtags(path_to_conversation_export, row_range=(0, -1),
                     copy_data_to_table(cursor, conv_hash_query_string, conv_hash_rows_batch)
                     connection.commit()
 
+    prev_block_time = log_time("hashtags", it, log_step, start_time, prev_block_time)
+    print("...Finish importing 'hashtags' table...")
+    print("...Finish importing 'conversation_hashtags' table...")
 
 # checking conversation_references table, if there exists 
 def remove_references_on_non_existing_conversations():
     print("...Removing references pointing to non existing authors...")
+    start_time = time.time()
 
     with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
                      password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
@@ -594,92 +619,104 @@ def remove_references_on_non_existing_conversations():
             )
             connection.commit()
 
-def add_table_constraints():
+    end_time = time.time()
+    print(f"{end_time - start_time} seconds spent on deleting invalid conversation_references")
+
+def add_table_constraints(which_table=None):
     with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
                      password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
 
         print("...Adding FK and other table constraints...")
+        start_time = time.time()
 
         with connection.cursor() as cursor:
-            cursor.execute("""
-                ALTER TABLE conversations
-                ADD CONSTRAINT fk_authors FOREIGN KEY (author_id) 
-                REFERENCES authors (id)
-                ON DELETE SET NULL;
-            """)
+
+            if which_table is None or which_table == "conversations":
+                cursor.execute("""
+                    ALTER TABLE conversations
+                    ADD CONSTRAINT fk_authors FOREIGN KEY (author_id) 
+                    REFERENCES authors (id)
+                    ON DELETE SET NULL;
+                """)
             
-
-            cursor.execute("""
-                ALTER TABLE hashtags
-                ADD CONSTRAINT unique_tag UNIQUE (tag);
-            """)
-
-            
-            cursor.execute("""
-                ALTER TABLE conversation_hashtags
-                ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
-            """)
-            cursor.execute("""
-                ALTER TABLE conversation_hashtags
-                ADD CONSTRAINT fk_hashtags FOREIGN KEY (hashtag_id) 
-                REFERENCES hashtags (id)
-                ON DELETE CASCADE;
-            """)
-
-
-            cursor.execute("""
-                ALTER TABLE conversation_references
-                ADD CONSTRAINT fk_current_conversations FOREIGN KEY (conversation_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
+            if which_table is None or which_table == "hashtags":
+                cursor.execute("""
+                    ALTER TABLE hashtags
+                    ADD CONSTRAINT unique_tag UNIQUE (tag);
+                """)
                 
-            """)
-            cursor.execute("""
-                ALTER TABLE conversation_references
-                ADD CONSTRAINT fk_parent_conversations FOREIGN KEY (parent_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
-            """)
+                cursor.execute("""
+                    ALTER TABLE conversation_hashtags
+                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                """)
+                cursor.execute("""
+                    ALTER TABLE conversation_hashtags
+                    ADD CONSTRAINT fk_hashtags FOREIGN KEY (hashtag_id) 
+                    REFERENCES hashtags (id)
+                    ON DELETE CASCADE;
+                """)
 
+            if which_table is None or which_table == "references":
+                cursor.execute("""
+                    ALTER TABLE conversation_references
+                    ADD CONSTRAINT fk_current_conversations FOREIGN KEY (conversation_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                    
+                """)
+                cursor.execute("""
+                    ALTER TABLE conversation_references
+                    ADD CONSTRAINT fk_parent_conversations FOREIGN KEY (parent_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                """)
 
-            cursor.execute("""
-                ALTER TABLE links
-                ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
-            """)
+            if which_table is None or which_table == "links":
+                cursor.execute("""
+                    ALTER TABLE links
+                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                """)
 
-
-            cursor.execute("""
-                ALTER TABLE annotations
-                ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
-            """)
-
-
-            cursor.execute("""
-                ALTER TABLE context_annotations
-                ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                REFERENCES conversations (id)
-                ON DELETE CASCADE;
-            """)
-            cursor.execute("""
-                ALTER TABLE context_annotations
-                ADD CONSTRAINT fk_context_domains FOREIGN KEY (context_domain_id) 
-                REFERENCES context_domains (id)
-                ON DELETE CASCADE;
-            """)
-            cursor.execute("""
-                ALTER TABLE context_annotations
-                ADD CONSTRAINT fk_context_entities FOREIGN KEY (context_entity_id) 
-                REFERENCES context_entities (id)
-                ON DELETE CASCADE;
-            """)
+            if which_table is None or which_table == "annotations":
+                cursor.execute("""
+                    ALTER TABLE annotations
+                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                """)
+            
+            if which_table is None or which_table == "context":
+                cursor.execute("""
+                    ALTER TABLE context_annotations
+                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
+                    REFERENCES conversations (id)
+                    ON DELETE CASCADE;
+                """)
+                cursor.execute("""
+                    ALTER TABLE context_annotations
+                    ADD CONSTRAINT fk_context_domains FOREIGN KEY (context_domain_id) 
+                    REFERENCES context_domains (id)
+                    ON DELETE CASCADE;
+                """)
+                cursor.execute("""
+                    ALTER TABLE context_annotations
+                    ADD CONSTRAINT fk_context_entities FOREIGN KEY (context_entity_id) 
+                    REFERENCES context_entities (id)
+                    ON DELETE CASCADE;
+                """)
 
             connection.commit()
+
+    end_time = time.time()
+    print(
+        f"""
+        {end_time - start_time} seconds spent on adding FK and 
+        other constraints to {which_table if which_table is not None else ""} table
+    """)
 
 def drop_all_tables():    
     with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
