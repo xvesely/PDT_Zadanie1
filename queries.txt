@@ -10,3 +10,27 @@ SELECT * FROM annotations;
 SELECT * FROM context_domains;
 SELECT * FROM context_entities;
 SELECT * FROM context_annotations;
+
+
+SELECT 'authors', COUNT(*) FROM authors UNION
+SELECT 'conversations', COUNT(*) FROM conversations UNION
+SELECT 'hashtags', COUNT(*) FROM hashtags UNION
+SELECT 'conversation_hashtags', COUNT(*) FROM conversation_hashtags UNION
+SELECT 'conversation_references', COUNT(*) FROM conversation_references UNION
+SELECT 'links', COUNT(*) FROM links UNION
+SELECT 'annotations', COUNT(*) FROM annotations UNION
+SELECT 'context_domains', COUNT(*) FROM context_domains UNION
+SELECT 'context_entities', COUNT(*) FROM context_entities UNION
+SELECT 'context_annotations', COUNT(*) FROM context_annotations;
+
+
+SELECT 'authors', pg_size_pretty(pg_total_relation_size('authors')) UNION
+SELECT 'conversations', pg_size_pretty(pg_total_relation_size('conversations')) UNION
+SELECT 'hashtags', pg_size_pretty(pg_total_relation_size('hashtags')) UNION
+SELECT 'conversation_hashtags', pg_size_pretty(pg_total_relation_size('conversation_hashtags')) UNION
+SELECT 'conversation_references', pg_size_pretty(pg_total_relation_size('conversation_references')) UNION
+SELECT 'links', pg_size_pretty(pg_total_relation_size('links')) UNION
+SELECT 'annotations', pg_size_pretty(pg_total_relation_size('annotations')) UNION
+SELECT 'context_domains', pg_size_pretty(pg_total_relation_size('context_domains')) UNION
+SELECT 'context_entities', pg_size_pretty(pg_total_relation_size('context_entities')) UNION
+SELECT 'context_annotations', pg_size_pretty(pg_total_relation_size('context_annotations'))

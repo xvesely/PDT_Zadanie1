@@ -291,7 +291,6 @@ def import_annotations_links_references_table(path_to_conversation_export, start
                         links_arr = preprocess.prepare_links(conversation_obj)
                         references_arr = preprocess.prepare_conversation_references(conversation_obj)
                         
-                    
                         to_commit = False
 
                         if annotation_arr is not None:
@@ -581,142 +580,6 @@ def import_hashtags(path_to_conversation_export, start_time, row_range=(0, -1),
     print("...Finish importing 'hashtags' table...")
     print("...Finish importing 'conversation_hashtags' table...")
 
-# checking conversation_references table, if there exists 
-def remove_references_on_non_existing_conversations():
-    print("...Removing references pointing to non existing authors...")
-    start_time = time.time()
-
-    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
-                     password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
-
-        with connection.cursor() as cursor:
-            ids_to_delete = []
-
-            cursor.execute("""
-                SELECT id FROM conversations
-            """)
-            all_conversation_ids = cursor.fetchall()
-            all_conversation_ids = {item[0]:"1" for item in all_conversation_ids}
-
-            cursor.execute("""
-                SELECT id, parent_id FROM conversation_references
-            """)
-            references = cursor.fetchall()
-            
-            for ref in references:
-                ref_id = ref[0]
-                parent_id = ref[1]
-
-                if parent_id not in all_conversation_ids.keys():
-                    ids_to_delete.append(ref_id)
-
-            cursor.execute("""
-                DELETE FROM conversation_references
-                WHERE id = ANY(%s)
-                """,
-                [ids_to_delete]
-            )
-            connection.commit()
-
-    end_time = time.time()
-    print(f"{end_time - start_time} seconds spent on deleting invalid conversation_references")
-
-def add_table_constraints(which_table=None):
-    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
-                     password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
-
-        print("...Adding FK and other table constraints...")
-        start_time = time.time()
-
-        with connection.cursor() as cursor:
-
-            if which_table is None or which_table == "conversations":
-                cursor.execute("""
-                    ALTER TABLE conversations
-                    ADD CONSTRAINT fk_authors FOREIGN KEY (author_id) 
-                    REFERENCES authors (id)
-                    ON DELETE SET NULL;
-                """)
-            
-            if which_table is None or which_table == "hashtags":
-                cursor.execute("""
-                    ALTER TABLE hashtags
-                    ADD CONSTRAINT unique_tag UNIQUE (tag);
-                """)
-                
-                cursor.execute("""
-                    ALTER TABLE conversation_hashtags
-                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                """)
-                cursor.execute("""
-                    ALTER TABLE conversation_hashtags
-                    ADD CONSTRAINT fk_hashtags FOREIGN KEY (hashtag_id) 
-                    REFERENCES hashtags (id)
-                    ON DELETE CASCADE;
-                """)
-
-            if which_table is None or which_table == "references":
-                cursor.execute("""
-                    ALTER TABLE conversation_references
-                    ADD CONSTRAINT fk_current_conversations FOREIGN KEY (conversation_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                    
-                """)
-                cursor.execute("""
-                    ALTER TABLE conversation_references
-                    ADD CONSTRAINT fk_parent_conversations FOREIGN KEY (parent_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                """)
-
-            if which_table is None or which_table == "links":
-                cursor.execute("""
-                    ALTER TABLE links
-                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                """)
-
-            if which_table is None or which_table == "annotations":
-                cursor.execute("""
-                    ALTER TABLE annotations
-                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                """)
-            
-            if which_table is None or which_table == "context":
-                cursor.execute("""
-                    ALTER TABLE context_annotations
-                    ADD CONSTRAINT fk_conversations FOREIGN KEY (conversation_id) 
-                    REFERENCES conversations (id)
-                    ON DELETE CASCADE;
-                """)
-                cursor.execute("""
-                    ALTER TABLE context_annotations
-                    ADD CONSTRAINT fk_context_domains FOREIGN KEY (context_domain_id) 
-                    REFERENCES context_domains (id)
-                    ON DELETE CASCADE;
-                """)
-                cursor.execute("""
-                    ALTER TABLE context_annotations
-                    ADD CONSTRAINT fk_context_entities FOREIGN KEY (context_entity_id) 
-                    REFERENCES context_entities (id)
-                    ON DELETE CASCADE;
-                """)
-
-            connection.commit()
-
-    end_time = time.time()
-    print(
-        f"""
-        {end_time - start_time} seconds spent on adding FK and 
-        other constraints to {which_table if which_table is not None else ""} table
-    """)
-
 def drop_all_tables():    
     with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
                         password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
@@ -730,30 +593,6 @@ def drop_all_tables():
             cursor.execute("DROP TABLE IF EXISTS conversation_references CASCADE")
             cursor.execute("DROP TABLE IF EXISTS links CASCADE")
             cursor.execute("DROP TABLE IF EXISTS annotations CASCADE")
-            cursor.execute("DROP TABLE IF EXISTS context_domains CASCADE")
-            cursor.execute("DROP TABLE IF EXISTS context_entities CASCADE")
-            cursor.execute("DROP TABLE IF EXISTS context_annotations CASCADE")
-
-            connection.commit()
-
-
-def clear_tables():
-    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
-                        password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
-
-        with connection.cursor() as cursor:
-
-            # cursor.execute("DELETE FROM authors")
-            # cursor.execute("DELETE FROM conversations")
-            # cursor.execute("DELETE FROM hashtags")
-            # cursor.execute("DELETE FROM conversation_hashtags")
-            # cursor.execute("DELETE FROM conversation_references")
-            # cursor.execute("DELETE FROM links")
-            # cursor.execute("DELETE FROM annotations")
-            # cursor.execute("DELETE FROM context_domains CASCADE")
-            # cursor.execute("DELETE FROM context_entities CASCADE")
-            # cursor.execute("DELETE FROM context_annotations CASCADE")
-
             cursor.execute("DROP TABLE IF EXISTS context_domains CASCADE")
             cursor.execute("DROP TABLE IF EXISTS context_entities CASCADE")
             cursor.execute("DROP TABLE IF EXISTS context_annotations CASCADE")
