@@ -23,8 +23,8 @@ def prepare_authors(obj):
         else:
             obj[str_attrb] = make_string_valid(obj[str_attrb])
 
-    obj["name"] = obj["name"][:255]
-    obj["username"] = obj["username"][:255]
+    obj["name"] = obj["name"][:255] if obj["name"] is not None else None
+    obj["username"] = obj["username"][:255] if obj["username"] is not None else None
 
     public_metrics = [
         "followers_count",
@@ -64,17 +64,31 @@ def check_conversation_validity(obj):
     attrs_to_check = [
         "id",
         "author_id",
-        "created_at"
+        "created_at",
+        "text",
+        "lang",
+        "source",
+        "possibly_sensitive"
     ]
     for attr in attrs_to_check:
-        if exists(obj, attr, is_id=True) == False:
-            return False
         if attr == "id" or attr == "author_id":
+            if exists(obj, attr, is_id=True) == False:
+                return False
             try:
                 x = int(obj[attr])
             except:
                 return False
-
+        elif attr == "possibly_sensitive":
+            if exists(obj, attr, is_id=False) == False:
+                return False
+            try:
+                x = bool(obj["possibly_sensitive"])
+            except:
+                return False
+        else:
+            if exists(obj, attr, is_id=False) == False:
+                return False
+            
     return True
 
 
@@ -101,7 +115,7 @@ def prepare_conversation(obj, prepare_other_models=False):
 
     for attr in possibly_string_attributes:
         if exists(obj, attr) == False:
-            obj[attr] = ""
+            return None
         obj[attr] = make_string_valid(obj[attr])
 
     obj["lang"] = obj["lang"][:3]
@@ -109,7 +123,7 @@ def prepare_conversation(obj, prepare_other_models=False):
     try:
         obj["possibly_sensitive"] = bool(obj["possibly_sensitive"])
     except:
-        obj["possibly_sensitive"] = False
+        return None
 
     public_metrics = [
         "retweet_count",
@@ -184,7 +198,6 @@ def prepare_hashtags(conversation):
             if exists(hashtag, "tag") and len(hashtag["tag"]) > 0:
                 hashtags_arr.append(make_string_valid(hashtag["tag"]))
 
-        hashtags_arr = list(set(hashtags_arr))
         return [[tag] for tag in hashtags_arr]
     return None
 
@@ -207,11 +220,18 @@ def prepare_annotations(conversation):
             if sum(attr_states) != len(attr_names):
                 continue
 
-            values_to_add = ([conversation["id"]] +
-                             [make_string_valid(annot[attr]) for attr in attr_names])
+            try:
+                annot["probability"] = float(annot["probability"])
+            except:
+                continue
 
-            if exists_same_row(annotations_arr, values_to_add) == False:
-                annotations_arr.append(values_to_add)
+            values_to_add = [
+                [int(conversation["id"])],
+                make_string_valid(annot["normalized_text"]),
+                make_string_valid(annot["type"]),
+                annot["probability"]
+            ]
+            annotations_arr.append(values_to_add)
 
         return annotations_arr
     return None
@@ -231,7 +251,7 @@ def prepare_links(conversation):
                 "title",
                 "description"
             ]
-            values = [conversation["id"]]
+            values = [int(conversation["id"])]
 
             if exists(link, "expanded_url") == False:
                 continue
@@ -244,9 +264,7 @@ def prepare_links(conversation):
 
             if len(values[1]) > 2048:
                 continue
-        
-            if exists_same_row(link_arr, values) == False:
-                link_arr.append(values)
+            link_arr.append(values)
 
         return link_arr
     return None
@@ -260,7 +278,6 @@ def prepare_context_annotations(conversation):
     domain_arr = []
     entity_arr = []
     domain_entity_rels = []
-    domain_entity_rels_ids = {}
 
     for context in context_annotations:
         main_attr = [
@@ -304,13 +321,11 @@ def prepare_context_annotations(conversation):
         entity_arr.append(entity)
 
         new_domain_entity_rel = [
-            conversation["id"],
+            int(conversation["id"]),
             domain[0],
             entity[0]
         ]
-        new_domain_entity_rel_id = f"{conversation['id']}-{domain[0]}-{entity[0]}" 
-        if not_duplicate(domain_entity_rels_ids, new_domain_entity_rel_id, cast_to_int=False):
-            domain_entity_rels.append(new_domain_entity_rel)
+        domain_entity_rels.append(new_domain_entity_rel)
 
     if len(domain_arr) > 0:
         return domain_arr, entity_arr, domain_entity_rels
@@ -328,15 +343,14 @@ def prepare_conversation_references(conversation):
         if exists(ref, "id", is_id=True) == False or exists(ref, "type") == False:
             continue
 
-        values = [conversation["id"]]
+        values = [int(conversation["id"])]
         try:
             values.append(int(ref["id"]))
         except:
             continue
         values.append(make_string_valid(ref["type"])[:20])
 
-        if exists_same_row(references_arr, values) == False:
-            references_arr.append(values)
+        references_arr.append(values)
 
     if len(references_arr) > 0:
         return references_arr

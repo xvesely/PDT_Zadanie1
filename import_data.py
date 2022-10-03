@@ -411,37 +411,36 @@ def import_context_domains_entities_annotations_tables(path_to_conversation_expo
                     if preprocess.check_conversation_validity(conversation_obj) and not_duplicate(conversation_ids, conversation_obj["id"]):
                         domain_arr, entity_arr, annotation_arr = preprocess.prepare_context_annotations(conversation_obj)
 
-                        new_domains = []
-                        new_entities = []
                         if domain_arr is not None:
+                            new_domains = []
                             new_domains = list(filter(lambda d: not_duplicate(domain_ids, d[0]), domain_arr))
-                        if entity_arr is not None:
+
+                            new_entities = []
                             new_entities = list(filter(lambda e: not_duplicate(entity_ids, e[0]), entity_arr))
 
-                        domain_rows_batch.extend(new_domains)
-                        entity_rows_batch.extend(new_entities)
-
-                        to_commit = False
-
-                        if len(domain_rows_batch) >= batch_size:
-                            domain_rows_batch = copy_data_to_table(
-                                cursor, domain_query_string, domain_rows_batch)
-                            to_commit = True
-
-                        if len(entity_rows_batch) >= batch_size:
-                            entity_rows_batch = copy_data_to_table(
-                                cursor, entity_query_string, entity_rows_batch)
-                            to_commit = True
-                            
-                        if annotation_arr is not None:
+                            domain_rows_batch.extend(new_domains)
+                            entity_rows_batch.extend(new_entities)
                             annotation_rows_batch.extend(annotation_arr)
+
+                            to_commit = False
+
+                            if len(domain_rows_batch) >= batch_size:
+                                domain_rows_batch = copy_data_to_table(
+                                    cursor, domain_query_string, domain_rows_batch)
+                                to_commit = True
+
+                            if len(entity_rows_batch) >= batch_size:
+                                entity_rows_batch = copy_data_to_table(
+                                    cursor, entity_query_string, entity_rows_batch)
+                                to_commit = True
+                                
                             if len(annotation_rows_batch) >= batch_size:
                                 annotation_rows_batch = copy_data_to_table(
                                     cursor, annotation_query_string, annotation_rows_batch)
                                 to_commit = True
                                 
-                        if to_commit:
-                            connection.commit()
+                            if to_commit:
+                                connection.commit()
                     
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
                         prev_block_time = log_time("context", it, log_step, start_time, prev_block_time)
