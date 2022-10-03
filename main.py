@@ -36,42 +36,41 @@ def job_dispatcher(all_authors_ids, start_time, value):
 
 
 if __name__ == "__main__":
-    # START_TIME = time.time()
+    START_TIME = time.time()
     
-    # # remove logs file from previous run
-    # if os.path.exists("./logs"):
-    #     for file in os.listdir("./logs"):
-    #         fullpath = os.path.join("./logs", file)
-    #         os.remove(fullpath)
+    # remove logs file from previous run
+    if os.path.exists("./logs"):
+        for file in os.listdir("./logs"):
+            fullpath = os.path.join("./logs", file)
+            os.remove(fullpath)
 
-    # load_dotenv()
-    # import_data.drop_all_tables()
+    load_dotenv()
+    import_data.drop_all_tables()
     
-    # path_to_authors = r"C:\Users\marve\authors.jsonl.gz"
-    # all_author_ids = import_data.import_authors_table(path_to_authors, START_TIME, drop_table=False)
+    path_to_authors = r"C:\Users\marve\authors.jsonl.gz"
+    all_author_ids = import_data.import_authors_table(path_to_authors, START_TIME, drop_table=False)
     
-    # tables_to_import = [    
-    #     "conversations",
-    #     "context",
-    #     "annot_links_refs",
-    #     "hashtags",
-    # ]
+    tables_to_import = [    
+        "conversations",
+        "context",
+        "annot_links_refs",
+        "hashtags",
+    ]
 
-    # func = partial(job_dispatcher, all_author_ids, START_TIME)
+    func = partial(job_dispatcher, all_author_ids, START_TIME)
     
-    # with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-    #     executor.map(func, tables_to_import)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+        executor.map(func, tables_to_import)
 
-    # import_data.remove_references_on_non_existing_conversations()
+    import_data.remove_references_on_non_existing_conversations()
 
-    # tables_to_add_constraint = [
-    #     "context",
-    #     "references",
-    #     "hashtags",
-    #     "conversations",
-    #     "links",
-    #     "annotations",
-    # ]
-    # with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-    #     executor.map(import_data.add_table_constraints, tables_to_add_constraint) 
-    pass
+    tables_to_add_constraint = [
+        "context",
+        "references",
+        "hashtags",
+        "conversations",
+        "links",
+        "annotations",
+    ]
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+        executor.map(import_data.add_table_constraints, tables_to_add_constraint) 
