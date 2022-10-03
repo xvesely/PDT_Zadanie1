@@ -85,6 +85,9 @@ def not_duplicate(all_ids, new_id, cast_to_int=True):
 
 
 def copy_data_to_table(cursor, query_str, data):
+    if len(data) == 0:
+        return []
+    
     with cursor.copy(query_str) as copy:
         for record in data:
             copy.write_row(record)

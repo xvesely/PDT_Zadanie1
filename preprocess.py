@@ -226,7 +226,7 @@ def prepare_annotations(conversation):
                 continue
 
             values_to_add = [
-                [int(conversation["id"])],
+                int(conversation["id"]),
                 make_string_valid(annot["normalized_text"]),
                 make_string_valid(annot["type"]),
                 annot["probability"]

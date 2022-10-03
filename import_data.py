@@ -1,5 +1,6 @@
 from locale import currency
 from shutil import which
+from turtle import clear
 import psycopg as pg3
 import psycopg2 as pg
 import psycopg2.extensions
@@ -106,7 +107,8 @@ def import_conversation_table(path_to_conversation_export, start_time, authors_i
         reply_count int4,
         like_count int4,
         quote_count int4,
-        created_at TIMESTAMPTZ
+        created_at TIMESTAMPTZ,
+        FOREIGN KEY(author_id) REFERENCES authors (id)
         );
     """
 
@@ -164,17 +166,10 @@ def import_conversation_table(path_to_conversation_export, start_time, authors_i
     prev_block_time = log_time("conversations", it, log_step, start_time, prev_block_time)
     print("...Finished importing 'conversations' table...")
 
+    return all_ids
+
 
 def conversation_copy_cmd(cursor, conversations, authors):
-    with cursor.copy("""
-        COPY conversations (id, author_id, content,
-        possibly_sensitive, language, source,
-        retweet_count, reply_count, like_count,
-        quote_count, created_at) FROM STDIN
-    """) as copy:
-        for conversation_record in conversations:
-            copy.write_row(conversation_record)
-
     if len(authors) > 0:
         with cursor.copy("""
             COPY authors (id, name, username, description, 
@@ -183,6 +178,15 @@ def conversation_copy_cmd(cursor, conversations, authors):
         """) as copy:
             for author_record in authors:
                 copy.write_row(author_record)
+    
+    with cursor.copy("""
+        COPY conversations (id, author_id, content,
+        possibly_sensitive, language, source,
+        retweet_count, reply_count, like_count,
+        quote_count, created_at) FROM STDIN
+    """) as copy:
+        for conversation_record in conversations:
+            copy.write_row(conversation_record)
 
     return [], []
 
@@ -201,7 +205,8 @@ def import_annotations_links_references_table(path_to_conversation_export, start
         conversation_id int8 NOT NULL,
         value text NOT NULL,
         type text NOT NULL,
-        probability numeric(4,3) NOT NULL
+        probability numeric(4,3) NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations (id)
         );
     """
     create_table_string2 = """
@@ -210,7 +215,8 @@ def import_annotations_links_references_table(path_to_conversation_export, start
         conversation_id int8 NOT NULL,
         url varchar(2048) NOT NULL,
         title text,
-        description text
+        description text,
+        FOREIGN KEY(conversation_id) REFERENCES conversations (id)
         );
     """
     create_table_string3 = """
@@ -218,7 +224,9 @@ def import_annotations_links_references_table(path_to_conversation_export, start
         id BIGSERIAL PRIMARY KEY,
         conversation_id int8 NOT NULL,
         parent_id int8 NOT NULL,
-        type varchar(20) NOT NULL
+        type varchar(20) NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations (id),
+        FOREIGN KEY(parent_id) REFERENCES conversations (id)
         );
     """
 
@@ -263,7 +271,13 @@ def import_annotations_links_references_table(path_to_conversation_export, start
                 references_rows_batch = []
 
                 conversation_ids = {}
-                
+
+                cursor.execute("""
+                        SELECT id FROM conversations
+                    """)
+                all_possible_parent_id_values = cursor.fetchall()
+                all_possible_parent_id_values = {item[0]:"1" for item in all_possible_parent_id_values}
+            
                 for it, conversation_json_str in enumerate(f):
                     if it < row_range[0]:
                         continue
@@ -276,7 +290,8 @@ def import_annotations_links_references_table(path_to_conversation_export, start
                         annotation_arr = preprocess.prepare_annotations(conversation_obj)
                         links_arr = preprocess.prepare_links(conversation_obj)
                         references_arr = preprocess.prepare_conversation_references(conversation_obj)
-
+                        
+                    
                         to_commit = False
 
                         if annotation_arr is not None:
@@ -294,7 +309,9 @@ def import_annotations_links_references_table(path_to_conversation_export, start
                                 to_commit = True
                             
                         if references_arr is not None:
-                            references_rows_batch.extend(references_arr)
+                            valid_references = list(filter(lambda ref: ref[1] in all_possible_parent_id_values, references_arr))
+
+                            references_rows_batch.extend(valid_references)
                             if len(references_rows_batch) >= batch_size:
                                 references_rows_batch = copy_data_to_table(
                                     cursor, references_copy_query, references_rows_batch)
@@ -350,7 +367,10 @@ def import_context_domains_entities_annotations_tables(path_to_conversation_expo
         id BIGSERIAL PRIMARY KEY,
         conversation_id int8 NOT NULL,
         context_domain_id int8 NOT NULL,
-        context_entity_id int8 NOT NULL
+        context_entity_id int8 NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations (id),
+        FOREIGN KEY(context_domain_id) REFERENCES context_domains (id),
+        FOREIGN KEY(context_entity_id) REFERENCES context_entities (id)
         );
     """
 
@@ -422,39 +442,26 @@ def import_context_domains_entities_annotations_tables(path_to_conversation_expo
                             entity_rows_batch.extend(new_entities)
                             annotation_rows_batch.extend(annotation_arr)
 
-                            to_commit = False
-
-                            if len(domain_rows_batch) >= batch_size:
+                            if it % batch_size == 0:
                                 domain_rows_batch = copy_data_to_table(
                                     cursor, domain_query_string, domain_rows_batch)
-                                to_commit = True
 
-                            if len(entity_rows_batch) >= batch_size:
                                 entity_rows_batch = copy_data_to_table(
                                     cursor, entity_query_string, entity_rows_batch)
-                                to_commit = True
                                 
-                            if len(annotation_rows_batch) >= batch_size:
                                 annotation_rows_batch = copy_data_to_table(
                                     cursor, annotation_query_string, annotation_rows_batch)
-                                to_commit = True
                                 
-                            if to_commit:
                                 connection.commit()
                     
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
                         prev_block_time = log_time("context", it, log_step, start_time, prev_block_time)
 
-                if len(domain_rows_batch) != 0:
+                if len(domain_rows_batch) + len(entity_rows_batch) + len(annotation_rows_batch) > 0:
                     copy_data_to_table(cursor, domain_query_string, domain_rows_batch)
-                    connection.commit()
-
-                if len(entity_rows_batch) != 0:
                     copy_data_to_table(cursor, entity_query_string, entity_rows_batch)
-                    connection.commit()
-
-                if len(annotation_rows_batch) != 0:
                     copy_data_to_table(cursor, annotation_query_string, annotation_rows_batch)
+
                     connection.commit()
 
     prev_block_time = log_time("context", it, log_step, start_time, prev_block_time)
@@ -473,14 +480,16 @@ def import_hashtags(path_to_conversation_export, start_time, row_range=(0, -1),
     create_table_string1 = """
         CREATE TABLE IF NOT EXISTS hashtags (
         id int8 PRIMARY KEY,
-        tag text NOT NULL
+        tag text UNIQUE NOT NULL
         );
     """
     create_table_string2 = """
         CREATE TABLE IF NOT EXISTS conversation_hashtags (
         id BIGSERIAL PRIMARY KEY,
         conversation_id int8 NOT NULL,
-        hashtag_id int8 NOT NULL
+        hashtag_id int8 NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations (id),
+        FOREIGN KEY(hashtag_id) REFERENCES hashtags (id)
         );
     """
 
@@ -551,30 +560,21 @@ def import_hashtags(path_to_conversation_export, start_time, row_range=(0, -1),
                             hashtag_rows_batch.extend(new_hashtags)
                             conv_hash_rows_batch.extend(new_conv_hash)
 
-                            to_commit = False
-
-                            if len(hashtag_rows_batch) >= batch_size:
+                            if it % batch_size == 0:
                                 hashtag_rows_batch = copy_data_to_table(
                                     cursor, hashtag_query_string, hashtag_rows_batch)
-                                to_commit = True
-
-                            if len(conv_hash_rows_batch) >= batch_size:
                                 conv_hash_rows_batch = copy_data_to_table(
                                     cursor, conv_hash_query_string, conv_hash_rows_batch)
-                                to_commit = True
                                 
-                            if to_commit:
                                 connection.commit()
                     
                     if it % log_step == 0 and it != 0 and it != row_range[0]:
                         prev_block_time = log_time("hashtags", it, log_step, start_time, prev_block_time)
 
-                if len(hashtag_rows_batch) != 0:
+                if len(hashtag_rows_batch) + len(conv_hash_rows_batch) > 0:
                     copy_data_to_table(cursor, hashtag_query_string, hashtag_rows_batch)
-                    connection.commit()
-
-                if len(conv_hash_rows_batch) != 0:
                     copy_data_to_table(cursor, conv_hash_query_string, conv_hash_rows_batch)
+
                     connection.commit()
 
     prev_block_time = log_time("hashtags", it, log_step, start_time, prev_block_time)
@@ -730,6 +730,30 @@ def drop_all_tables():
             cursor.execute("DROP TABLE IF EXISTS conversation_references CASCADE")
             cursor.execute("DROP TABLE IF EXISTS links CASCADE")
             cursor.execute("DROP TABLE IF EXISTS annotations CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS context_domains CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS context_entities CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS context_annotations CASCADE")
+
+            connection.commit()
+
+
+def clear_tables():
+    with pg3.connect(host="localhost", user=os.getenv('PDT_POSTGRES_USER'),
+                        password=os.getenv('PDT_POSTGRES_PASS'), dbname="postgres") as connection:
+
+        with connection.cursor() as cursor:
+
+            # cursor.execute("DELETE FROM authors")
+            # cursor.execute("DELETE FROM conversations")
+            # cursor.execute("DELETE FROM hashtags")
+            # cursor.execute("DELETE FROM conversation_hashtags")
+            # cursor.execute("DELETE FROM conversation_references")
+            # cursor.execute("DELETE FROM links")
+            # cursor.execute("DELETE FROM annotations")
+            # cursor.execute("DELETE FROM context_domains CASCADE")
+            # cursor.execute("DELETE FROM context_entities CASCADE")
+            # cursor.execute("DELETE FROM context_annotations CASCADE")
+
             cursor.execute("DROP TABLE IF EXISTS context_domains CASCADE")
             cursor.execute("DROP TABLE IF EXISTS context_entities CASCADE")
             cursor.execute("DROP TABLE IF EXISTS context_annotations CASCADE")
